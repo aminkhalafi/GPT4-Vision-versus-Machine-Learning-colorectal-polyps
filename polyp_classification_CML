@@ -1,0 +1,120 @@
+import os
+import cv2
+import pandas as pd
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score, classification_report
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.svm import SVC
+from sklearn.linear_model import LogisticRegression
+from sklearn.naive_bayes import GaussianNB
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.calibration import calibration_curve
+from sklearn.utils import shuffle
+from sklearn.metrics import (
+    accuracy_score, precision_score, recall_score, f1_score,
+    classification_report, roc_auc_score, roc_curve, auc, confusion_matrix)
+import time
+import matplotlib.pyplot as plt
+from xgboost import XGBClassifier
+
+
+def load_images(folder_path, image_names):
+    images = []
+    for image_name in image_names:
+        image_path = os.path.join(folder_path, image_name)
+        image = cv2.imread(image_path)
+        image = cv2.resize(image, (300, 300))
+        images.append(image)
+    return np.array(images)
+
+
+train_df = pd.read_csv('D:\\research\\colonoscopy\\ai_colon\\polyp_images\\keys\\all_keys_labmod_aug.csv')
+test_df = pd.read_csv('D:\\research\\colonoscopy\\ai_colon\\test_set\\keys_test\\all_test_labmod.csv')
+train_folder = 'D:\\research\\colonoscopy\\ai_colon\\polyp_images\\all'
+test_folder = 'D:\\research\\colonoscopy\\ai_colon\\test_set\\all_test'
+
+
+X_train = load_images(train_folder, train_df['image_name'].values)
+y_train = train_df['polyp_type'].values
+
+
+X_test = load_images(test_folder, test_df['image_name'].values)
+y_test = test_df['polyp_type'].values
+
+
+X_train_flatten = X_train.reshape(X_train.shape[0], -1)
+X_test_flatten = X_test.reshape(X_test.shape[0], -1)
+
+
+
+# Define classifiers
+classifiers = [
+    #XGBClassifier(),
+    DecisionTreeClassifier(),
+    RandomForestClassifier(n_estimators=100, random_state=42),
+    SVC(kernel='linear', C=1.0, probability=True, random_state=42),
+    LogisticRegression(random_state=42),
+    GradientBoostingClassifier(n_estimators=100, learning_rate=0.1, random_state=42),
+    GaussianNB()
+]
+
+# Initialize data storage
+results = []
+
+# Directory for saving ROC curves
+save_dir = 'D:\\research\\colonoscopy\\ai_colon\\result_classwithout'
+
+
+for model in classifiers:
+    result_dict = {'Model': type(model).__name__}
+    
+    start_time1 = time.time()
+    model.fit(X_train_flatten, y_train)
+    training_time = time.time() - start_time1
+
+    start_time2 = time.time()
+    y_pred = model.predict(X_test_flatten)
+    inference_time = time.time() - start_time2
+
+    # Evaluation metrics
+    accuracy = accuracy_score(y_test, y_pred)
+    precision = precision_score(y_test, y_pred, average='weighted')
+    recall = recall_score(y_test, y_pred, average='weighted')
+    f1 = f1_score(y_test, y_pred, average='weighted')
+    conf_matrix = confusion_matrix(y_test, y_pred)
+    conf_matrix_dict = {'Confusion Matrix': conf_matrix.tolist()}
+    
+    #y_pred_prob = model.predict_proba(X_test_flatten)
+    #num_classes = len(np.unique(y_train)) 
+    # Compute ROC AUC for each class
+    #roc_auc = []
+    #for i in range(num_classes):
+        #if np.sum(y_test == i) > 0:  # Check if there are samples of class i in the test set
+         #  roc_auc_i = roc_auc_score(y_test == i, y_pred_prob[:, i])
+          # roc_auc.append(roc_auc_i)
+
+    #roc_auc = np.mean(roc_auc)
+    
+    
+    # Save results to dictionary
+    result_dict.update({
+        'Accuracy': accuracy,
+        'Precision': precision,
+        'Recall': recall,
+        'F1-Score': f1,
+        #'AUC': roc_auc,
+        'Confusion Matrix': conf_matrix_dict,
+        'Training Time (s)': training_time,
+        'Inference Time (s)': inference_time
+    })
+
+
+    
+    # Append results to the list
+    results.append(result_dict)
+
+# Save results to Excel file
+results_df = pd.DataFrame(results)
+results_df.to_excel('model_results_polypclass_wo_box.xlsx', index=False)
+
