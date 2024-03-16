@@ -1,0 +1,225 @@
+import os
+import pandas as pd
+import numpy as np
+import cv2
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.svm import SVC
+from sklearn.linear_model import LogisticRegression
+from sklearn.naive_bayes import GaussianNB
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.calibration import calibration_curve
+from sklearn.utils import shuffle
+from sklearn.metrics import (
+    accuracy_score, precision_score, recall_score, f1_score,
+    classification_report, roc_auc_score, roc_curve, auc, confusion_matrix)
+import time
+import matplotlib.pyplot as plt
+from xgboost import XGBClassifier
+
+def preprocess_image(image):
+    # Check if the image is loaded successfully
+    if image is None:
+        print("Error: Image not loaded successfully.")
+        return None
+    
+    # Resize image to a fixed size
+    resized_image = cv2.resize(image, (300, 300))  # Assuming the images are color images
+    
+    # Check if the resized image has the expected size
+    if resized_image.shape != (300, 300, 3):  # Assuming the images are color images
+        print("Error: Resized image has unexpected size.")
+        return None
+    return resized_image
+
+def load_data(train_annotation_file, train_image_folder, test_annotation_file, test_image_folder, normal_train_folder, normal_test_folder):
+    # Load training set
+    train_annotations = pd.read_csv(train_annotation_file)
+    train_images = []
+    train_labels = []
+
+    for index, row in train_annotations.iterrows():
+        image_name = row['image_name']
+        image_path = os.path.join(train_image_folder, image_name)
+        image = cv2.imread(image_path)
+        processed_image = preprocess_image(image)
+        
+        if processed_image is not None:
+            train_images.append(processed_image)
+            train_labels.append(1)  # 1 for polyp
+        else:
+            print(f"Error loading image: {image_name}")
+
+    # Load testing set
+    test_annotations = pd.read_csv(test_annotation_file)
+    test_images = []
+    test_labels = []
+
+    for index, row in test_annotations.iterrows():
+        image_name = row['image_name']
+        image_path = os.path.join(test_image_folder, image_name)
+        image = cv2.imread(image_path)
+        processed_image = preprocess_image(image)
+        
+        if processed_image is not None:
+            test_images.append(processed_image)
+            test_labels.append(1)  # 1 for polyp
+        else:
+            print(f"Error loading image: {image_name}")
+
+
+
+    normal_train_image_list = os.listdir(normal_train_folder)
+
+    for normal_image_name in normal_train_image_list:
+        normal_image_path = os.path.join(normal_train_folder, normal_image_name)
+        normal_image = cv2.imread(normal_image_path)
+        processed_normal_image = preprocess_image(normal_image)
+        
+        if processed_normal_image is not None:
+            train_images.append(processed_normal_image)
+            train_labels.append(0)  # 0 for normal
+        else:
+            print(f"Error loading image: {normal_image_name}")
+
+
+    normal_test_image_list = os.listdir(normal_test_folder)
+
+    for normal_image_name in normal_test_image_list:
+        normal_image_path = os.path.join(normal_test_folder, normal_image_name)
+        normal_image = cv2.imread(normal_image_path)
+        processed_normal_image = preprocess_image(normal_image)
+        
+        if processed_normal_image is not None:
+            test_images.append(processed_normal_image)
+            test_labels.append(0)  # 0 for normal
+        else:
+            print(f"Error loading image: {normal_image_name}")
+
+    return train_images, train_labels, test_images, test_labels
+
+# Paths to data
+train_annotation_file = 'D:\\research\\colonoscopy\\ai_colon\\polyp_images\\keys\\all_keys_labmod_aug.csv'
+train_image_folder = 'D:\\research\\colonoscopy\\ai_colon\\polyp_images\\all'
+test_annotation_file = 'D:\\research\\colonoscopy\\ai_colon\\test_set\\keys_test\\all_test_labmod.csv'
+test_image_folder = 'D:\\research\\colonoscopy\\ai_colon\\test_set\\all_test'
+normal_train_folder = 'D:\\research\\colonoscopy\\ai_colon\\normal_train_set'
+normal_test_folder = 'D:\\research\\colonoscopy\\ai_colon\\normal_test_set'
+
+# Load training and testing sets
+train_images, train_labels, test_images, test_labels = load_data(train_annotation_file, train_image_folder, test_annotation_file, test_image_folder, normal_train_folder, normal_test_folder)
+
+# Shuffle data to randomize order
+train_images, train_labels = shuffle(train_images, train_labels, random_state=42)
+test_images, test_labels = shuffle(test_images, test_labels, random_state=42)
+
+# Convert lists to numpy arrays
+X_train = np.array(train_images)
+y_train = np.array(train_labels)
+X_test = np.array(test_images)
+y_test = np.array(test_labels)
+
+X_train_flatten = X_train.reshape(X_train.shape[0], -1)
+X_test_flatten = X_test.reshape(X_test.shape[0], -1)
+
+# Define classifiers
+classifiers = [
+    #XGBClassifier(),
+    DecisionTreeClassifier(),
+    RandomForestClassifier(n_estimators=100, random_state=42),
+    SVC(kernel='linear', C=1.0, probability=True, random_state=42),
+    LogisticRegression(random_state=42),
+    GradientBoostingClassifier(n_estimators=100, learning_rate=0.1, random_state=42),
+    GaussianNB()
+]
+
+# Initialize data storage
+results = []
+
+# Directory for saving ROC curves
+save_dir = 'D:\\research\\colonoscopy\\ai_colon\\result'
+
+# Iterate over classifiers
+for model in classifiers:
+    # Create a dictionary to store results for each model
+    result_dict = {'Model': type(model).__name__}
+    
+    start_time1 = time.time()
+    model.fit(X_train_flatten, y_train)
+    training_time = time.time() - start_time1
+    
+    start_time2 = time.time()
+    y_pred = model.predict(X_test_flatten)
+    inference_time = time.time() - start_time2
+
+    # Evaluation metrics
+    accuracy = accuracy_score(y_test, y_pred)
+    precision = precision_score(y_test, y_pred, average='weighted')
+    recall = recall_score(y_test, y_pred, average='weighted')
+    f1 = f1_score(y_test, y_pred, average='weighted')
+    class_report = classification_report(y_test, y_pred)
+    roc_auc = roc_auc_score(y_test, y_pred)
+    conf_matrix = confusion_matrix(y_test, y_pred)
+    conf_matrix_dict = {'Confusion Matrix': conf_matrix.tolist()}
+    
+    # Save results to dictionary
+    result_dict.update({
+        'Accuracy': accuracy,
+        'Precision': precision,
+        'Recall': recall,
+        'F1-Score': f1,
+        'Classification Report': class_report,
+        'AUC': roc_auc,
+        'Confusion Matrix': conf_matrix_dict,
+        'Training Time (s)': training_time,
+        'Inference Time (s)': inference_time
+    })
+
+    # ROC Curve
+    y_pred_prob = model.predict_proba(X_test_flatten)[:, 1]
+    fpr, tpr, thresholds = roc_curve(y_test, y_pred_prob)
+    roc_auc = auc(fpr, tpr)
+    
+    # Plot and save ROC curve
+    plt.figure(figsize=(8, 8))
+    plt.plot(fpr, tpr, label=f'AUC = {roc_auc:.2f}')
+    plt.plot([0, 1], [0, 1], 'k--')
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title(f'Receiver Operating Characteristic (ROC) Curve - {type(model).__name__}')
+    plt.legend(loc="lower right")
+    
+    # Save plot as PNG, JPEG, and PDF in the specified directory
+    plt.savefig(os.path.join(save_dir, f'roc_curve_{type(model).__name__.lower()}.png'))
+    plt.savefig(os.path.join(save_dir, f'roc_curve_{type(model).__name__.lower()}.jpeg'))
+    plt.savefig(os.path.join(save_dir, f'roc_curve_{type(model).__name__.lower()}.pdf'))
+    
+    plt.show()
+
+    # Calibration Curve
+    prob_true, prob_pred = calibration_curve(y_test, y_pred_prob, n_bins=10, strategy='uniform')
+
+    # Plot and save calibration curve
+    plt.figure(figsize=(8, 8))
+    plt.plot(prob_pred, prob_true, marker='o', label='Calibration Curve')
+    plt.plot([0, 1], [0, 1], 'k--', label='Perfectly Calibrated')
+    plt.xlabel('Mean Predicted Probability')
+    plt.ylabel('Fraction of Positives')
+    plt.title(f'Calibration Curve - {type(model).__name__}')
+    plt.legend(loc="lower right")
+
+    # Save plot as PNG, JPEG, and PDF in the specified directory
+    plt.savefig(os.path.join(save_dir, f'calibration_curve_{type(model).__name__.lower()}.png'))
+    plt.savefig(os.path.join(save_dir, f'calibration_curve_{type(model).__name__.lower()}.jpeg'))
+    plt.savefig(os.path.join(save_dir, f'calibration_curve_{type(model).__name__.lower()}.pdf'))
+
+    plt.show()
+    
+    # Append results to the list
+    results.append(result_dict)
+
+# Save results to Excel file
+results_df = pd.DataFrame(results)
+results_df.to_excel('model_results_polyp_wobbx.xlsx', index=False)
+
